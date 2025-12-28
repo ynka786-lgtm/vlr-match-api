@@ -1,0 +1,6 @@
+fastapi
+httpx
+beautifulsoup4
+lxml
+uvicorn
+mangum
