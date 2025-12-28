@@ -137,9 +137,27 @@ async def parse_scoreboard(tbody: Tag, team_name_mapping: dict) -> list[dict]:
         # Parse stats - handle potential missing data gracefully
         def get_stat(index: int) -> float:
             try:
-                stat_span = stats[index].find("span", class_="side mod-both") or stats[index].find("span", class_="mod-both")
+                td = stats[index]
+                # Try multiple span patterns - VLR uses different classes
+                stat_span = (
+                    td.find("span", class_="side mod-side mod-both") or
+                    td.find("span", class_="side mod-both") or
+                    td.find("span", class_="mod-both") or
+                    td.find("span", class_="mod-side")
+                )
                 if stat_span:
-                    return clean_number_string(stat_span.get_text())
+                    # Get direct text, ignoring nested elements
+                    text = stat_span.get_text(strip=True)
+                    if text:
+                        return clean_number_string(text)
+                # Fallback: get all text from td
+                td_text = td.get_text(strip=True)
+                if td_text:
+                    # Extract first number from text
+                    import re
+                    numbers = re.findall(r'[\d.]+', td_text)
+                    if numbers:
+                        return clean_number_string(numbers[0])
             except (IndexError, AttributeError):
                 pass
             return 0
