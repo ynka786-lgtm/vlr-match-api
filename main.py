@@ -1,5 +1,6 @@
 """
 VLR.gg Scraper API - Enhanced version with team rosters, player history, and live scores
+Deploy to Render for use with VCT Companion iOS app
 """
 
 from fastapi import FastAPI, HTTPException
@@ -114,11 +115,11 @@ async def get_match(match_id: str):
             player_name = container.get_text(strip=True)
             if player_name:
                 if i % 2 == 0:
-                    team1_roster.append(player_name)
+                    team1_roster.append({"name": player_name, "img": "", "id": ""})
                 else:
-                    team2_roster.append(player_name)
+                    team2_roster.append({"name": player_name, "img": "", "id": ""})
         
-        # Method 3: If we have team IDs, fetch rosters directly
+        # Method 3: If we have team IDs, fetch rosters directly (with images)
         if not team1_roster and len(team_ids) >= 1 and team_ids[0]:
             team1_roster = await fetch_team_roster(team_ids[0])
         if not team2_roster and len(team_ids) >= 2 and team_ids[1]:
@@ -126,10 +127,20 @@ async def get_match(match_id: str):
         
         # Create a placeholder map with roster info
         players = []
-        for name in team1_roster[:5]:
+        for player_data in team1_roster[:5]:
+            # Handle both dict and string formats for backwards compatibility
+            if isinstance(player_data, dict):
+                player_name = player_data.get("name", "")
+                player_img = player_data.get("img", "")
+                player_id = player_data.get("id", "")
+            else:
+                player_name = str(player_data)
+                player_img = ""
+                player_id = ""
+            
             players.append({
-                "id": "",
-                "name": name,
+                "id": player_id,
+                "name": player_name,
                 "team": teams[0]["name"] if teams else "Team 1",
                 "agents": [],
                 "rating": 0.0,
@@ -142,12 +153,23 @@ async def get_match(match_id: str):
                 "headshot_percent": 0,
                 "first_kills": 0,
                 "first_deaths": 0,
-                "first_kills_diff": 0
+                "first_kills_diff": 0,
+                "img": player_img  # Add image URL
             })
-        for name in team2_roster[:5]:
+        for player_data in team2_roster[:5]:
+            # Handle both dict and string formats for backwards compatibility
+            if isinstance(player_data, dict):
+                player_name = player_data.get("name", "")
+                player_img = player_data.get("img", "")
+                player_id = player_data.get("id", "")
+            else:
+                player_name = str(player_data)
+                player_img = ""
+                player_id = ""
+            
             players.append({
-                "id": "",
-                "name": name,
+                "id": player_id,
+                "name": player_name,
                 "team": teams[1]["name"] if len(teams) > 1 else "Team 2",
                 "agents": [],
                 "rating": 0.0,
@@ -160,7 +182,8 @@ async def get_match(match_id: str):
                 "headshot_percent": 0,
                 "first_kills": 0,
                 "first_deaths": 0,
-                "first_kills_diff": 0
+                "first_kills_diff": 0,
+                "img": player_img  # Add image URL
             })
         
         if players:
@@ -216,7 +239,7 @@ async def get_match(match_id: str):
 
 
 async def fetch_team_roster(team_id: str) -> list:
-    """Helper to fetch team roster for upcoming matches"""
+    """Helper to fetch team roster for upcoming matches - returns list of dicts with name and img"""
     url = f"https://www.vlr.gg/team/{team_id}"
     
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -236,7 +259,28 @@ async def fetch_team_roster(team_id: str) -> list:
         if name_el:
             player_name = name_el.get_text(strip=True)
             if player_name:
-                roster.append(player_name)
+                # Get player image
+                img_el = item.select_one("img")
+                player_img = ""
+                if img_el:
+                    player_img = img_el.get("src", "")
+                    if player_img and not player_img.startswith("http"):
+                        player_img = f"https:{player_img}" if player_img.startswith("//") else f"https://www.vlr.gg{player_img}"
+                
+                # Get player ID from link
+                player_link = item.select_one("a")
+                player_id = ""
+                if player_link:
+                    href = player_link.get("href", "")
+                    id_match = re.search(r'/player/(\d+)', href)
+                    if id_match:
+                        player_id = id_match.group(1)
+                
+                roster.append({
+                    "name": player_name,
+                    "img": player_img,
+                    "id": player_id
+                })
     
     return roster
 
