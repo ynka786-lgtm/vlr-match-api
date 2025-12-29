@@ -259,13 +259,36 @@ async def fetch_team_roster(team_id: str) -> list:
         if name_el:
             player_name = name_el.get_text(strip=True)
             if player_name:
-                # Get player image
-                img_el = item.select_one("img")
+                # Get player image - try multiple selectors
                 player_img = ""
+                
+                # Try 1: Direct img tag
+                img_el = item.select_one("img")
                 if img_el:
-                    player_img = img_el.get("src", "")
-                    if player_img and not player_img.startswith("http"):
-                        player_img = f"https:{player_img}" if player_img.startswith("//") else f"https://www.vlr.gg{player_img}"
+                    player_img = img_el.get("src", "") or img_el.get("data-src", "")
+                
+                # Try 2: Look for img in the link
+                if not player_img:
+                    player_link = item.select_one("a")
+                    if player_link:
+                        link_img = player_link.select_one("img")
+                        if link_img:
+                            player_img = link_img.get("src", "") or link_img.get("data-src", "")
+                
+                # Try 3: Look for any img in the item
+                if not player_img:
+                    all_imgs = item.select("img")
+                    if all_imgs:
+                        player_img = all_imgs[0].get("src", "") or all_imgs[0].get("data-src", "")
+                
+                # Fix URL if needed
+                if player_img:
+                    if player_img.startswith("//"):
+                        player_img = f"https:{player_img}"
+                    elif player_img.startswith("/"):
+                        player_img = f"https://www.vlr.gg{player_img}"
+                    elif not player_img.startswith("http"):
+                        player_img = f"https://www.vlr.gg{player_img}"
                 
                 # Get player ID from link
                 player_link = item.select_one("a")
@@ -275,6 +298,10 @@ async def fetch_team_roster(team_id: str) -> list:
                     id_match = re.search(r'/player/(\d+)', href)
                     if id_match:
                         player_id = id_match.group(1)
+                        # If we have player ID but no image, try to construct image URL
+                        if not player_img and player_id:
+                            # VLR.gg player images are typically at /img/base/ph/{id}.png or similar
+                            player_img = f"https://www.vlr.gg/img/base/ph/{player_id}.png"
                 
                 roster.append({
                     "name": player_name,
@@ -298,13 +325,22 @@ def parse_player_row(row, teams, table_index=0):
         # Determine team from table index (0 = team 1, 1 = team 2)
         team_name = teams[table_index]["name"] if table_index < len(teams) else "Unknown"
         
-        # Player ID
+        # Player ID and image
         player_link = row.select_one("a")
         player_id = ""
-        if player_link and player_link.get("href"):
-            match = re.search(r'/player/(\d+)', player_link.get("href", ""))
-            if match:
-                player_id = match.group(1)
+        player_img = ""
+        if player_link:
+            href = player_link.get("href", "")
+            id_match = re.search(r'/player/(\d+)', href)
+            if id_match:
+                player_id = id_match.group(1)
+            
+            # Try to get player image from the row
+            img_el = row.select_one("img")
+            if img_el:
+                player_img = img_el.get("src", "")
+                if player_img and not player_img.startswith("http"):
+                    player_img = f"https:{player_img}" if player_img.startswith("//") else f"https://www.vlr.gg{player_img}"
         
         # Agents
         agents = []
@@ -362,6 +398,7 @@ def parse_player_row(row, teams, table_index=0):
             "name": player_name,
             "team": team_name,
             "agents": agents,
+            "img": player_img,  # Add player image URL
             **stats
         }
     except Exception as e:
