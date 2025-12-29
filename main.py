@@ -290,7 +290,7 @@ async def fetch_team_roster(team_id: str) -> list:
                     elif not player_img.startswith("http"):
                         player_img = f"https://www.vlr.gg{player_img}"
                 
-                # Get player ID from link
+                             # Get player ID from link
                 player_link = item.select_one("a")
                 player_id = ""
                 if player_link:
@@ -298,10 +298,8 @@ async def fetch_team_roster(team_id: str) -> list:
                     id_match = re.search(r'/player/(\d+)', href)
                     if id_match:
                         player_id = id_match.group(1)
-                        # If we have player ID but no image, try to construct image URL
-                        if not player_img and player_id:
-                            # VLR.gg player images are typically at /img/base/ph/{id}.png or similar
-                            player_img = f"https://www.vlr.gg/img/base/ph/{player_id}.png"
+                        # Don't construct image URLs - only use actual images from HTML
+                        # Constructed URLs often don't exist and cause loading issues
                 
                 roster.append({
                     "name": player_name,
