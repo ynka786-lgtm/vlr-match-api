@@ -163,8 +163,7 @@ def parse_player_row(row, teams):
             "first_kills": 0, "first_deaths": 0, "first_kills_diff": 0
         }
         
-        stat_keys = ["rating", "acs", "kills", "deaths", "assists", "kd_diff", "kast", "adr", "headshot_percent", "first_kills", "first_deaths", "first_kills_diff"]
-        
+        stat_keys = ["rating", "acs", "kills", "deaths", "assists", "kd_diff", "kast", "adr", "headshot_percent", "first_kills", "first_deaths", "first_kills_diff"]        
         for i, cell in enumerate(stat_cells):
             if i >= len(stat_keys):
                 break
