@@ -866,7 +866,8 @@ async def search_team(team_name: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)"""
+    import os
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 VLR.gg Scraper API - Enhanced version with team rosters, player history, and live scores
 Deploy to Render for use with VCT Companion iOS app
 """
