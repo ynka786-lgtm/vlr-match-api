@@ -102,14 +102,17 @@ async def get_match(match_id: str):
                 "score": score_el.get_text(strip=True)
             })
         
-        # Parse player stats for this map
+               # Parse player stats for this map
         players = []
-        player_rows = map_container.select("table.wf-table-inset tbody tr")
+        # Get all tables - typically 2 tables, one per team
+        tables = map_container.select("table.wf-table-inset")
         
-        for row in player_rows:
-            player_data = parse_player_row(row, teams)
-            if player_data:
-                players.append(player_data)
+        for table_index, table in enumerate(tables):
+            player_rows = table.select("tbody tr")
+            for row in player_rows:
+                player_data = parse_player_row(row, teams, table_index)
+                if player_data:
+                    players.append(player_data)
         
         maps.append({
             "map": map_name,
