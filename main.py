@@ -290,7 +290,7 @@ async def fetch_player_image(player_id: str) -> str:
         elif img_url.startswith("/"):
             return f"https://www.vlr.gg{img_url}"
         elif img_url.startswith("http"):
-            img_url
+            return img_url
     
     return ""
 
@@ -869,7 +869,7 @@ async def search_team(team_name: str):
 
 @app.get("/matches")
 async def get_all_matches():
-    """Scrape all upcoming matches from VLR.gg and return as JSON"""
+    """Scrape all upcoming matches from VLR.gg and return as JSON with proper dates"""
     url = "https://www.vlr.gg/matches"
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
@@ -877,42 +877,83 @@ async def get_all_matches():
             response.raise_for_status()
         except httpx.HTTPError as e:
             raise HTTPException(status_code=500, detail=f"Failed to fetch: {str(e)}")
+    
     soup = BeautifulSoup(response.text, "lxml")
-    match_items = soup.select(".wf-module-item.match-item")
     matches = []
-    for item in match_items:
-        # Match ID
-        href = item.get("href", "")
-        match_id = ""
-        match_match = re.search(r'/([0-9]+)/', href)
-        if match_match:
-            match_id = match_match.group(1)
-        # Teams
-        teams = []
-        team_items = item.select(".match-item-vs-team")
-        for team_item in team_items:
-            name_el = team_item.select_one(".match-item-vs-team-name")
-            team_name = name_el.get_text(strip=True) if name_el else ""
-            teams.append(team_name)
-        # Event
-        event_el = item.select_one(".match-item-event")
-        event = event_el.get_text(strip=True) if event_el else ""
-        # Date/time
-        time_el = item.select_one(".match-item-time")
-        match_time = time_el.get("data-utc-ts", "") if time_el else ""
-        # Convert timestamp to ISO format if possible
-        try:
-            match_time = datetime.utcfromtimestamp(int(match_time)).isoformat() if match_time else ""
-        except Exception:
-            pass
-        if match_id and len(teams) == 2:
-            matches.append({
-                "id": match_id,
-                "team1": teams[0],
-                "team2": teams[1],
-                "event": event,
-                "start_time": match_time
-            })
+    
+    # Find all date headers and their associated matches
+    wf_cards = soup.select(".wf-card")
+    
+    for card in wf_cards:
+        # Try to find date header
+        date_header = card.select_one(".wf-label.mod-large")
+        card_date = None
+        
+        if date_header:
+            date_text = date_header.get_text(strip=True)
+            # Parse dates like "Today", "Tomorrow", "January 5", etc.
+            try:
+                if date_text.lower() == "today":
+                    card_date = datetime.utcnow().date()
+                elif date_text.lower() == "tomorrow":
+                    card_date = (datetime.utcnow() + timedelta(days=1)).date()
+                else:
+                    # Try parsing "Month Day" format
+                    # Add current year if not present
+                    if not any(char.isdigit() for c in date_text.split() for char in c if len(c) == 4):
+                        date_text = f"{date_text} {datetime.utcnow().year}"
+                    card_date = datetime.strptime(date_text, "%B %d %Y").date()
+            except:
+                card_date = None
+        
+        # Get all match items in this card
+        match_items = card.select(".wf-module-item.match-item")
+        
+        for item in match_items:
+            # Match ID
+            href = item.get("href", "")
+            match_id = ""
+            match_match = re.search(r'/([0-9]+)/', href)
+            if match_match:
+                match_id = match_match.group(1)
+            
+            # Teams
+            teams = []
+            team_items = item.select(".match-item-vs-team")
+            for team_item in team_items:
+                name_el = team_item.select_one(".match-item-vs-team-name")
+                team_name = name_el.get_text(strip=True) if name_el else ""
+                teams.append(team_name)
+            
+            # Event
+            event_el = item.select_one(".match-item-event")
+            event = event_el.get_text(strip=True) if event_el else ""
+            
+            # Try to get timestamp from data attribute
+            time_el = item.select_one(".match-item-time")
+            match_time = ""
+            
+            if time_el:
+                ts = time_el.get("data-utc-ts", "")
+                if ts:
+                    try:
+                        match_time = datetime.utcfromtimestamp(int(ts)).isoformat()
+                    except:
+                        pass
+            
+            # If no timestamp but we have a card date, use it
+            if not match_time and card_date:
+                match_time = card_date.isoformat()
+            
+            if match_id and len(teams) == 2:
+                matches.append({
+                    "id": match_id,
+                    "team1": teams[0],
+                    "team2": teams[1],
+                    "event": event,
+                    "start_time": match_time
+                })
+    
     return {"matches": matches}
 
 
