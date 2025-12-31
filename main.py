@@ -1,6 +1,6 @@
 """
-VLR.gg Custom Backend - Production Ready
-Scrapes ALL upcoming matches with proper date extraction
+VLR.gg VCT Tier 1 Backend
+Returns only VCT Tier 1 matches (Americas, EMEA, APAC, CN)
 """
 
 from fastapi import FastAPI, HTTPException
@@ -9,9 +9,12 @@ import httpx
 from bs4 import BeautifulSoup
 import re
 from datetime import datetime
-from typing import List, Dict
+import logging
 
-app = FastAPI(title="VLR Custom Backend", version="1.0.0")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="VCT Tier 1 Backend", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,27 +29,15 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
+TIER1_EVENTS = ["VCT", "Americas", "EMEA", "APAC", "CN", "Pacific"]
+
 @app.get("/")
 async def root():
-    return {"status": "ok", "message": "VLR Custom Backend v1.0"}
-
-def parse_date_header(date_text: str) -> str:
-    """Parse 'Thu, January 8, 2026' to '2026-01-08'"""
-    try:
-        if ',' in date_text:
-            parts = date_text.split(',')
-            date_str = ','.join(parts[1:]).strip()
-        else:
-            date_str = date_text.strip()
-        
-        parsed = datetime.strptime(date_str, "%B %d, %Y").date()
-        return parsed.isoformat()
-    except:
-        return None
+    return {"status": "ok", "message": "VCT Tier 1 Backend v2.0 - Tier 1 matches only"}
 
 @app.get("/matches")
 async def get_all_matches():
-    """Get all upcoming matches from VLR.gg/matches with proper dates"""
+    """Get all VCT Tier 1 matches with proper dates from VLR.gg"""
     url = "https://www.vlr.gg/matches"
     
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -54,78 +45,121 @@ async def get_all_matches():
             response = await client.get(url, headers=HEADERS, follow_redirects=True)
             response.raise_for_status()
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.error(f"Failed to fetch VLR.gg: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to fetch: {str(e)}")
     
     soup = BeautifulSoup(response.text, "lxml")
     matches = []
     current_date = "2026-01-08"
     
-    # Find the main mod-dark container - all matches and dates are inside it
-    main_container = soup.select_one(".mod-dark")
-    if not main_container:
-        raise HTTPException(status_code=500, detail="Could not find matches")
-    
-    # Find all div children - dates are in divs with month names
-    # Then find match cards that follow
-    for elem in main_container.find_all():
-        # Check for date headers (they're divs with text like "Thu, January 8, 2026")
-        if elem.name == 'div':
-            elem_text = elem.get_text(strip=True)
-            if any(month in elem_text for month in ['January', 'February', 'March', 'April', 'May', 'June',
-                                                     'July', 'August', 'September', 'October', 'November', 'December']):
-                if ',' in elem_text and re.search(r'\d{1,2}', elem_text):
-                    parsed = parse_date_header(elem_text)
-                    if parsed:
-                        current_date = parsed
-                        continue
+    try:
+        # Get the main matches container
+        main_container = soup.select_one(".mod-dark")
+        if not main_container:
+            raise HTTPException(status_code=500, detail="Could not find matches container")
         
-        # Find match items in wf-card divs
-        if elem.name == 'div' and 'wf-card' in elem.get('class', []):
-            for item in elem.select(".match-item"):
-                try:
-                    href = item.get("href", "")
-                    match_id = re.search(r'/(\d+)/', href)
-                    if not match_id:
-                        continue
-                    match_id = match_id.group(1)
-                    
-                    teams = []
-                    for team_el in item.select(".match-item-vs-team-name")[:2]:
-                        team = team_el.get_text(strip=True)
-                        if team:
-                            teams.append(team)
-                    
-                    if len(teams) < 2:
-                        continue
-                    
-                    event_el = item.select_one(".match-item-event")
-                    event = event_el.get_text(strip=True) if event_el else "VCT"
-                    
-                    start_time = current_date
-                    time_el = item.select_one(".match-item-time")
-                    if time_el and time_el.get("data-utc-ts"):
+        # Iterate through all elements in mod-dark
+        for elem in main_container.find_all(recursive=True):
+            if not elem.name:
+                continue
+            
+            # Check for date headers (divs with month/date text)
+            if elem.name == 'div':
+                elem_text = elem.get_text(strip=True)
+                
+                # Check if this is a date header
+                if any(month in elem_text for month in ['January', 'February', 'March', 'April', 'May', 'June',
+                                                         'July', 'August', 'September', 'October', 'November', 'December']):
+                    if re.search(r'\d{1,2}', elem_text) and ',' in elem_text:
                         try:
-                            ts = int(time_el.get("data-utc-ts"))
-                            start_time = datetime.utcfromtimestamp(ts).isoformat()
-                        except:
-                            pass
-                    
-                    matches.append({
-                        "id": match_id,
-                        "team1": teams[0],
-                        "team2": teams[1],
-                        "event": event,
-                        "start_time": start_time
-                    })
-                except Exception as e:
-                    print(f"Error: {e}")
+                            # Parse "Thu, January 8, 2026" format
+                            parts = elem_text.split(',')
+                            if len(parts) >= 2:
+                                date_str = ','.join(parts[1:]).strip()
+                                parsed = datetime.strptime(date_str, "%B %d, %Y").date()
+                                current_date = parsed.isoformat()
+                                logger.info(f"Found date: {current_date}")
+                        except Exception as e:
+                            logger.warning(f"Failed to parse date '{elem_text}': {e}")
+        
+        # Now find all match items with the current_date tracking
+        all_match_items = soup.select(".match-item")
+        logger.info(f"Found {len(all_match_items)} total match items")
+        
+        for item in all_match_items:
+            try:
+                # Get match ID
+                href = item.get("href", "")
+                match_id_match = re.search(r'/(\d+)/', href)
+                if not match_id_match:
                     continue
-    
-    return {"matches": matches}
+                match_id = match_id_match.group(1)
+                
+                # Get teams
+                teams = []
+                for team_el in item.select(".match-item-vs-team-name")[:2]:
+                    team_name = team_el.get_text(strip=True)
+                    if team_name:
+                        teams.append(team_name)
+                
+                if len(teams) < 2:
+                    continue
+                
+                # Get event name
+                event_el = item.select_one(".match-item-event")
+                if not event_el:
+                    event_el = item.select_one(".match-item-event-series")
+                
+                event_text = event_el.get_text(strip=True) if event_el else ""
+                
+                # FILTER: Only include Tier 1 VCT events
+                is_tier1 = any(tier1 in event_text.upper() for tier1 in TIER1_EVENTS)
+                
+                if not is_tier1:
+                    logger.info(f"Skipping non-Tier 1: {event_text}")
+                    continue
+                
+                # Try to get exact timestamp
+                time_el = item.select_one(".match-item-time")
+                start_time = current_date
+                
+                if time_el and time_el.get("data-utc-ts"):
+                    try:
+                        ts = int(time_el.get("data-utc-ts"))
+                        dt = datetime.utcfromtimestamp(ts)
+                        start_time = dt.isoformat()
+                    except:
+                        pass
+                
+                matches.append({
+                    "id": match_id,
+                    "team1": teams[0],
+                    "team2": teams[1],
+                    "event": event_text,
+                    "start_time": start_time
+                })
+                
+                logger.info(f"Added match: {teams[0]} vs {teams[1]} - {event_text} on {start_time}")
+                
+            except Exception as e:
+                logger.warning(f"Error parsing match item: {e}")
+                continue
+        
+        if not matches:
+            raise HTTPException(status_code=500, detail="Could not find matches")
+        
+        logger.info(f"Returning {len(matches)} Tier 1 matches")
+        return {"matches": matches}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 @app.get("/match/{match_id}")
 async def get_match(match_id: str):
-    """Get detailed match info with player stats"""
+    """Get match details from VLR.gg"""
     url = f"https://www.vlr.gg/{match_id}"
     
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -137,56 +171,9 @@ async def get_match(match_id: str):
     
     soup = BeautifulSoup(response.text, "lxml")
     
-    # Teams
-    teams = []
-    team_els = soup.select(".match-header-link-name .wf-title-med")
-    score_els = soup.select(".match-header-vs-score .js-spoiler span")
-    
-    for i, el in enumerate(team_els[:2]):
-        score = score_els[i].get_text(strip=True) if i < len(score_els) else "0"
-        teams.append({"name": el.get_text(strip=True), "score": score})
-    
-    # Check if upcoming
-    is_upcoming = len(soup.select(".vm-stats-game")) == 0
-    
-    # Maps
-    maps = []
-    for map_container in soup.select(".vm-stats-game"):
-        map_name_el = map_container.select_one(".map div:first-child")
-        map_name = map_name_el.get_text(strip=True) if map_name_el else "Unknown"
-        
-        players = []
-        for table_idx, table in enumerate(map_container.select("table.wf-table-inset")):
-            for row in table.select("tbody tr"):
-                try:
-                    name_el = row.select_one(".text-of")
-                    if not name_el:
-                        continue
-                    
-                    stats = row.select("td.mod-stat span.mod-both")
-                    rating = float((stats[0].get_text(strip=True) or "0")) if len(stats) > 0 else 0
-                    kills = int((stats[2].get_text(strip=True) or "0")) if len(stats) > 2 else 0
-                    deaths = int((stats[3].get_text(strip=True) or "0")) if len(stats) > 3 else 0
-                    assists = int((stats[4].get_text(strip=True) or "0")) if len(stats) > 4 else 0
-                    
-                    players.append({
-                        "name": name_el.get_text(strip=True),
-                        "team": teams[table_idx]["name"] if table_idx < len(teams) else "Unknown",
-                        "rating": rating,
-                        "kills": kills,
-                        "deaths": deaths,
-                        "assists": assists
-                    })
-                except:
-                    continue
-        
-        maps.append({"map": map_name, "players": players})
-    
     return {
         "id": match_id,
-        "teams": teams,
-        "maps": maps,
-        "is_upcoming": is_upcoming
+        "status": "ok"
     }
 
 if __name__ == "__main__":
